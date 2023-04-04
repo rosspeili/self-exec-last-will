@@ -12,3 +12,5 @@ It might seem like an ambitious plan at first glimpse, yet I am confident it's f
 🧬📃🤖
 
 (selw.sol) This is just a basic example of how the contract might be structured, and it would require more specific instructions for handling the distribution of digital assets, managing the monitoring system, and executing triggers.
+
+![Basic Flowchart](https://github.com/rosspeili/self-exec-last-will/blob/main/basicflow.png)
