@@ -1,95 +1,65 @@
-import ollama
-import chromadb
-import psycopg
-from psycopg.rows import dict_row
+pragma solidity ^0.8.0;
 
-client = chromadb.Client()
+contract LastWill {
+    address payable private owner;
+    address payable private beneficiary;
+    uint private deathDate;
+    bool private deceased;
 
-convo = []
-DB_PARAMS = {
-    'dbname': 'memory_agent',
-    'user': 'rosspeili',
-    'password': '2806',
-    'host': 'localhost',
-    'port': '5432'
+    mapping(address => uint) private balances;
+
+    event Transfer(address indexed _from, address indexed _to, uint _value);
+    event NewOwner(address indexed _newOwner);
+
+    modifier onlyOwner {
+        require(msg.sender == owner);
+        _;
+    }
+
+    modifier onlyAfterDeath {
+        require(deceased == true);
+        _;
+    }
+
+    constructor(address payable _beneficiary, uint _deathDate) public {
+        owner = msg.sender;
+        beneficiary = _beneficiary;
+        deathDate = _deathDate;
+        deceased = false;
+    }
+
+    function transfer(address payable _to, uint _amount) public onlyOwner returns(bool success) {
+        require(_amount <= balances[owner]);
+        balances[owner] -= _amount;
+        balances[_to] += _amount;
+        emit Transfer(owner, _to, _amount);
+        return true;
+    }
+
+    function distribute() public onlyAfterDeath returns(bool success) {
+        require(msg.sender == beneficiary);
+        require(address(this).balance > 0);
+        uint amount = address(this).balance;
+        beneficiary.transfer(amount);
+        emit Transfer(owner, beneficiary, amount);
+        return true;
+    }
+
+    function isDeceased() public onlyOwner returns(bool) {
+        if (deathDate <= block.timestamp) {
+            deceased = true;
+            distribute();
+        }
+        return deceased;
+    }
+
+    function changeOwner(address payable _newOwner) public onlyOwner {
+        owner = _newOwner;
+        emit NewOwner(_newOwner);
+    }
+
+    receive() external payable {
+        require(deceased == false);
+        balances[owner] += msg.value;
+    }
 }
-
-def connect_db():
-    conn = psycopg.connect(**DB_PARAMS)
-    return conn
-
-def fetch_conversations():
-    conn = connect_db()
-    with conn.cursor(row_factory=dict_row) as cursor:
-        cursor.execute('SELECT * FROM conversations')
-        conversations = cursor.fetchall()
-    conn.close()
-    return conversations
-
-def store_conversations(prompt, response):
-    conn = connect_db()
-    with conn.cursor() as cursor:
-        cursor.execute(
-            'INSERT INTO conversations (timestamp, prompt, response) VALUES (CURRENT_TIMESTAMP, %s, %s)',
-            (prompt, response)
-        )
-        conn.commit()
-    conn.close()  # This should be outside the `with` block
-
-def stream_response(prompt):
-    convo.append({'role': 'user', 'content': prompt})
-    response = ''
-    stream = ollama.chat(model='llama3', messages=convo, stream=True)
-    print('\nOPSIE:')
-
-    for chunk in stream:
-        content = chunk['message']['content']
-        response += content
-        print(content, end='', flush=True)
-
-    print('\n')
-    store_conversations(prompt=prompt, response=response)
-    convo.append({'role': 'assistant', 'content': response})
-
-conversations = fetch_conversations()
-
-def create_vector_db(conversations=conversations):
-    vector_db_name = 'conversations'
-    
-    try:
-        client.delete_collection(name=vector_db_name)
-    except ValueError:
-        pass 
-    
-    vector_db = client.create_collection(name=vector_db_name)
-
-    for c in conversations:
-        serialized_convo = f"prompt: {c['prompt']} response: {c['response']}"
-        response = ollama.embeddings(model='nomic-embed-text', prompt=serialized_convo)
-        embedding = response['embedding']
-
-        vector_db.add(
-            ids=[str(c['id'])],
-            embeddings=[embedding],
-            documents=[serialized_convo]
-        )
-
-def retrieve_embeddings(prompt):
-    response = ollama.embeddings(model='nomic-embed-text', prompt=prompt)
-    prompt_embedding = response['embedding']
-
-    vector_db = client.get_collection(name='conversations')
-    results = vector_db.query(query_embeddings=[prompt_embedding], n_results=1)
-    best_embedding = results['documents'][0][0]
-
-    return best_embedding
-
-create_vector_db(conversations=conversations)  # Use the correct variable
-
-while True:
-    prompt = input('USER:\n')
-    if prompt.lower() in ['exit', 'quit']:
-        break
-    context = retrieve_embeddings(prompt=prompt)
-    prompt = f'USER PROMPT: {prompt} \nCONTEXT FROM EMBEDDINGS: {context}'
-    stream_response(prompt=prompt)
